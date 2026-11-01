@@ -248,6 +248,7 @@ footer a { color: var(--ink-2); }
   function signCls(v) { return !num(v) ? "" : v > 0 ? "pos" : v < 0 ? "neg" : ""; }
   function dateOf(secs) { return new Date(secs * 1000).toISOString().slice(0, M.intraday ? 16 : 10).replace("T", " "); }
   function isoDate(s) { return s ? String(s).slice(0, M.intraday ? 16 : 10).replace("T", " ") : "—"; }
+  function isoDateTime(s) { return s ? String(s).slice(0, 16).replace("T", " ") : "—"; }
   function css(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
 
   // ------------------------------------------------------------ header
@@ -599,9 +600,10 @@ footer a { color: var(--ink-2); }
   function renderTrades(symbol) {
     var trades = tradesFor(symbol);
     if (!trades.length) { $("tradeTable").innerHTML = '<div class="empty">No trades for this symbol.</div>'; return; }
-    var h = "<table><thead><tr><th>Entry</th><th>Exit</th><th>Qty</th><th>Entry px</th><th>Exit px</th><th>P&amp;L</th><th>Return</th><th>Fees</th><th>Bars</th><th>MAE</th><th>MFE</th><th>Cash</th><th>Exit</th></tr></thead><tbody>";
+    var h = "<table><thead><tr><th>Entry</th><th>Entry signal</th><th>Exit</th><th>Exit signal</th><th>Qty</th><th>Entry px</th><th>Exit px</th><th>P&amp;L</th><th>Return</th><th>Fees</th><th>Bars</th><th>MAE</th><th>MFE</th><th>Cash</th><th>Exit</th></tr></thead><tbody>";
     trades.forEach(function (t) {
-      h += "<tr><td>" + isoDate(t.entry_time) + "</td><td>" + (t.is_open ? "open" : isoDate(t.exit_time)) + "</td><td>" + fx(t.quantity, 0) +
+      h += "<tr><td>" + isoDate(t.entry_time) + "</td><td>" + isoDateTime(t.entry_signal_time) + "</td><td>" +
+            (t.is_open ? "open" : isoDate(t.exit_time)) + "</td><td>" + isoDateTime(t.exit_signal_time) + "</td><td>" + fx(t.quantity, 0) +
         "</td><td>" + fx(t.entry_price, 3) + "</td><td>" + fx(t.exit_price, 3) + '</td><td class="' + signCls(t.pnl) + '">' + money(t.pnl) +
         '</td><td class="' + signCls(t.return_pct) + '">' + spct(t.return_pct) + "</td><td>" + fx(t.fees) + "</td><td>" + (t.bars_held == null ? "—" : t.bars_held) +
         "</td><td>" + pct(t.mae_pct, 1) + "</td><td>" + pct(t.mfe_pct, 1) + "</td><td>" + money(t.cash_after) + "</td><td>"+ esc(t.exit_reason) + "</td></tr>";
