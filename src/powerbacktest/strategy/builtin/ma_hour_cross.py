@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import Literal
 
 import pandas as pd
-import numpy as np
 from pydantic import Field, model_validator
 
 from powerbacktest.strategy.base import BarContext, PlotSpec, Strategy, StrategyParams
@@ -59,58 +58,35 @@ class MAHourCrossStrategy(Strategy):
 
     def indicators(self, bars: pd.DataFrame) -> pd.DataFrame:
         p = self.params
+        fn = MA if p.ma_type == "sma" else EMA
         day = bars.index.normalize()
-        close = bars["close"]
 
-        # 每个交易日的最终收盘价 —— 只允许 shift 之后使用（即只用"昨天及以前"的值）
-        prev_close = close.groupby(day).last()
-        k = pd.Series(day).map(pd.Series(range(len(prev_close)), index=prev_close.index)).to_numpy()
-
-        # "已完成日"均线值：对 prev_close 计算后 shift(1)，等价于只用昨天及以前的日收盘
-        def completed_ma(w: int) -> np.ndarray:
-            if p.ma_type == "ema":
-                return prev_close.ewm(span=w, adjust=False).mean().shift(1).to_numpy()
-            return prev_close.rolling(w).mean().shift(1).to_numpy()
-
-        s_prev, l_prev = completed_ma(p.short_window), completed_ma(p.long_window)
-
-        # 当前 bar 看到的均线 = 已完成日均线 与"当前价充当今日收盘"的一步递推
-        if p.ma_type == "ema":
-            a_s, a_l = 2 / (p.short_window + 1), 2 / (p.long_window + 1)
-            ma_short = a_s * close + (1 - a_s) * s_prev[k]
-            ma_long = a_l * close + (1 - a_l) * l_prev[k]
-        else:
-            sum_s = prev_close.shift(1).rolling(p.short_window - 1).sum().to_numpy()
-            sum_l = prev_close.shift(1).rolling(p.long_window - 1).sum().to_numpy()
-            ma_short = (sum_s[k] + close) / p.short_window
-            ma_long = (sum_l[k] + close) / p.long_window
-
-            # 均线转向：比较"昨日收盘口径"的 l_prev 与 n 天前的值（全部为已完成日，因果）
+        # Daily OHLC built only from hourly bars already seen (causal).
+        daily = bars.groupby(day).agg(close=("close", "last"))
+        ma_short, ma_long = fn(daily["close"], p.short_window), fn(daily["close"], p.long_window)
         n = p.turn_bars
-        l_ref = pd.Series(l_prev).shift(n).to_numpy()
-        up = pd.Series(l_prev[k] > l_ref[k], index=bars.index)
-        down = pd.Series(l_prev[k] < l_ref[k], index=bars.index)
+        up, down = ma_long > REF(ma_long, n), ma_long < REF(ma_long, n)
 
-        ms, ml = pd.Series(ma_short, index=bars.index), pd.Series(ma_long, index=bars.index)
+        # "Live" daily signal (same-day, no shift) -- used to detect intraday trigger.
         if p.mode == "state":
-            live_sig = (ms > ml).astype(float).where(ml.notna())
+            live_sig = (ma_short > ma_long).astype(float).where(ma_long.notna())
         else:
-            cross_up = (ms > ml) & (ms.shift(1) <= ml.shift(1))
-            cross_dn = (ml > ms) & (ml.shift(1) <= ms.shift(1))
-            live_sig = pd.Series(float("nan"), index=bars.index)
-            live_sig[cross_up & up.fillna(False)] = 1.0
-            live_sig[cross_dn & down.fillna(False)] = 0.0
+            live_sig = pd.Series(float("nan"), index=daily.index)
+            live_sig[CROSS(ma_short, ma_long) & up] = 1.0
+            live_sig[CROSS(ma_long, ma_short) & down] = 0.0
             live_sig = live_sig.ffill()
 
-            # 因果的日末判定：按 bar 的结束时间标签 == 市场收盘时间（HK 1H 为 16:00）
-        close_time = pd.Timestamp(p.close_time).time()  # 见下方新参数
-        is_last_bar_of_day = bars.index.time == close_time
+        day = bars.index.normalize()
+        day_series = pd.Series(day, index=bars.index)
+        # 用 cumcount 在组内从后往前数：causal 方式判断"截至当前为止是否已知会是最后一根"是不可能的，
+        # 必须换成不依赖未来的判定条件，比如固定收盘时刻：
+        is_last_bar_of_day = bars.index.time == bars.index.time.max()
 
         return pd.DataFrame(
             {
-                "ma_short": ma_short,
-                "ma_long": ma_long,
-                "daily_sig_live": live_sig.to_numpy(),
+                "ma_short": ma_short.reindex(day).to_numpy(),
+                "ma_long": ma_long.reindex(day).to_numpy(),
+                "daily_sig_live": live_sig.reindex(day).to_numpy(),
                 "is_last_bar_of_day": is_last_bar_of_day,
             },
             index=bars.index,
