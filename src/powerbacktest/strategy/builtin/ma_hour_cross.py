@@ -43,13 +43,15 @@ class MAHourCrossStrategy(Strategy):
     plots = (
         PlotSpec("ma_short", "price", "line", "MA short (daily)"),
         PlotSpec("ma_long", "price", "line", "MA long (daily)"),
+        PlotSpec("daily_sig_live", "lower", "line", "Daily signal (live)"),  #1108新增
     )
     params: MAHourCrossParams
 
     def __init__(self, *a, **kw):
         super().__init__(*a, **kw)
         self._day_signal: dict = {}  # date -> signal triggered today
-        self._last_sig: float = float("nan")  # last committed daily signal
+        self._last_sig: dict[str, float] = {}
+        #self._last_sig: float = float("nan")  # last committed daily signal
 
     def warmup_bars(self) -> int:
         p = self.params
@@ -98,6 +100,7 @@ class MAHourCrossStrategy(Strategy):
         return pd.Series(float("nan"), index=bars.index)
 
     def on_bar(self, ctx: BarContext) -> float:
+        sym = ctx.symbol
         d = ctx.time.normalize()
         live_sig = ctx.indicator("daily_sig_live")
         is_close = bool(ctx.indicator("is_last_bar_of_day"))
@@ -105,20 +108,17 @@ class MAHourCrossStrategy(Strategy):
         if live_sig != live_sig:  # NaN, no opinion yet
             return ctx.signal
 
-        triggered = self._day_signal.get(d)
+        triggered = self._day_signal.get((sym, d))
+        last_sig = self._last_sig.get(sym, float("nan"))
         out = ctx.signal
 
-        if triggered is None and live_sig != self._last_sig:
-            # Signal changed vs last known state -> trigger once, on whichever
-            # hourly bar the change appears.
-            self._day_signal[d] = live_sig
+        if triggered is None and live_sig != last_sig:
+            self._day_signal[(sym, d)] = live_sig
             out = live_sig
         elif triggered is not None and is_close and live_sig != triggered:
-            # Close re-check: signal vanished -> flip; next_open fill
-            # lands the order at next trading day's open.
-            self._day_signal[d] = live_sig
+            self._day_signal[(sym, d)] = live_sig
             out = live_sig
 
         if is_close:
-            self._last_sig = live_sig  # close-of-day value becomes tomorrow's baseline
+            self._last_sig[sym] = live_sig
         return out
