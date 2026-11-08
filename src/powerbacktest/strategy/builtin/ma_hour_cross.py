@@ -17,7 +17,7 @@ class MAHourCrossParams(StrategyParams):
     long_window: int = Field(50, ge=2, le=1000)
     ma_type: Literal["sma", "ema"] = "sma"
     mode: Literal["cross", "state"] = "cross"
-    turn_bars: int = Field(3, ge=1, le=20)
+    turn_bars: int = Field(1, ge=1, le=20)
     bars_per_day: int = Field(4, ge=1, le=24, description="hourly bars per trading day")
     close_time: str = Field(
         "16:00",
@@ -48,7 +48,8 @@ class MAHourCrossStrategy(Strategy):
 
     def __init__(self, *a, **kw):
         super().__init__(*a, **kw)
-        self._day_signal: dict = {}  # date -> signal recorded at intraday trigger
+        self._day_signal: dict = {}  # date -> signal triggered today
+        self._last_sig: float = float("nan")  # last committed daily signal
 
     def warmup_bars(self) -> int:
         p = self.params
@@ -101,22 +102,23 @@ class MAHourCrossStrategy(Strategy):
         live_sig = ctx.indicator("daily_sig_live")
         is_close = bool(ctx.indicator("is_last_bar_of_day"))
 
-        if live_sig != live_sig:  # NaN check, no opinion yet
+        if live_sig != live_sig:  # NaN, no opinion yet
             return ctx.signal
 
         triggered = self._day_signal.get(d)
+        out = ctx.signal
 
-        if triggered is None:
-            # First trigger today -> act immediately on the hourly bar.
+        if triggered is None and live_sig != self._last_sig:
+            # Signal changed vs last known state -> trigger once, on whichever
+            # hourly bar the change appears.
             self._day_signal[d] = live_sig
-            return live_sig
+            out = live_sig
+        elif triggered is not None and is_close and live_sig != triggered:
+            # Close re-check: signal vanished -> flip; next_open fill
+            # lands the order at next trading day's open.
+            self._day_signal[d] = live_sig
+            out = live_sig
 
         if is_close:
-            if live_sig != triggered:
-                # Signal vanished by the daily close -> flip; next_open fill
-                # defers execution to the next trading day's open.
-                self._day_signal[d] = live_sig
-                return live_sig
-            return ctx.signal  # confirmed -> keep current position
-
-        return ctx.signal  # mid-day, no new trigger -> hold
+            self._last_sig = live_sig  # close-of-day value becomes tomorrow's baseline
+        return out
