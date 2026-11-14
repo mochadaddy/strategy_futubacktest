@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Literal
 
 import pandas as pd
+import numpy as np
 from pydantic import Field, model_validator
 
 from powerbacktest.strategy.base import BarContext, PlotSpec, Strategy, StrategyParams
@@ -64,32 +65,51 @@ class MAHourCrossStrategy(Strategy):
         fn = MA if p.ma_type == "sma" else EMA
         day = bars.index.normalize()
 
-        # Daily OHLC built only from hourly bars already seen (causal).
-        daily = bars.groupby(day).agg(close=("close", "last"))
-        ma_short, ma_long = fn(daily["close"], p.short_window), fn(daily["close"], p.long_window)
-        n = p.turn_bars
-        up, down = ma_long > REF(ma_long, n), ma_long < REF(ma_long, n)
+        # Completed daily closes; today's entry is only used via .shift(1)+ views.
+        daily_close = bars.groupby(day)["close"].last()
+        d_ma_s = fn(daily_close, p.short_window)
+        d_ma_l = fn(daily_close, p.long_window)
 
-        # "Live" daily signal (same-day, no shift) -- used to detect intraday trigger.
-        if p.mode == "state":
-            live_sig = (ma_short > ma_long).astype(float).where(ma_long.notna())
+        # Broadcast completed-day values back to bar level as plain arrays
+        # (.reindex(day) keeps the day index -> must use .to_numpy()).
+        c = bars["close"].to_numpy()
+        prev_ma_s = d_ma_s.shift(1).reindex(day).to_numpy()
+        prev_ma_l = d_ma_l.shift(1).reindex(day).to_numpy()
+        ref_l = d_ma_l.shift(p.turn_bars).reindex(day).to_numpy()
+
+        # Provisional daily MA: today's close = this bar's own close.
+        if p.ma_type == "sma":
+            prev_s = daily_close.rolling(p.short_window - 1).sum().shift(1).reindex(day).to_numpy()
+            prev_l = daily_close.rolling(p.long_window - 1).sum().shift(1).reindex(day).to_numpy()
+            ma_short = (prev_s + c) / p.short_window
+            ma_long = (prev_l + c) / p.long_window
         else:
-            live_sig = pd.Series(float("nan"), index=daily.index)
-            live_sig[CROSS(ma_short, ma_long) & up] = 1.0
-            live_sig[CROSS(ma_long, ma_short) & down] = 0.0
+            a_s, a_l = 2 / (p.short_window + 1), 2 / (p.long_window + 1)
+            ma_short = a_s * c + (1 - a_s) * prev_ma_s
+            ma_long = a_l * c + (1 - a_l) * prev_ma_l
+
+        up = ma_long > ref_l
+        down = ma_long < ref_l
+
+        if p.mode == "state":
+            live_sig = pd.Series(
+                np.where(np.isnan(ma_long), np.nan, (ma_short > ma_long).astype(float)),
+                index=bars.index,
+            )
+        else:
+            live_sig = pd.Series(float("nan"), index=bars.index)
+            live_sig[(ma_short > ma_long) & (prev_ma_s <= prev_ma_l) & up] = 1.0
+            live_sig[(ma_long > ma_short) & (prev_ma_l <= prev_ma_s) & down] = 0.0
             live_sig = live_sig.ffill()
 
-        day = bars.index.normalize()
-        day_series = pd.Series(day, index=bars.index)
-        # 用 cumcount 在组内从后往前数：causal 方式判断"截至当前为止是否已知会是最后一根"是不可能的，
-        # 必须换成不依赖未来的判定条件，比如固定收盘时刻：
-        is_last_bar_of_day = bars.index.time == bars.index.time.max()
+        close_t = pd.Timestamp(p.close_time).time()
+        is_last_bar_of_day = bars.index.time == close_t
 
         return pd.DataFrame(
             {
-                "ma_short": ma_short.reindex(day).to_numpy(),
-                "ma_long": ma_long.reindex(day).to_numpy(),
-                "daily_sig_live": live_sig.reindex(day).to_numpy(),
+                "ma_short": ma_short,
+                "ma_long": ma_long,
+                "daily_sig_live": live_sig,
                 "is_last_bar_of_day": is_last_bar_of_day,
             },
             index=bars.index,
