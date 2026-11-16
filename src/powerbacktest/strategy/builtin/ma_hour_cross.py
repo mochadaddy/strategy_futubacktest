@@ -6,6 +6,7 @@ from typing import Literal
 
 import pandas as pd
 import numpy as np
+import datetime as dt
 from pydantic import Field, model_validator
 
 from powerbacktest.strategy.base import BarContext, PlotSpec, Strategy, StrategyParams
@@ -103,6 +104,7 @@ class MAHourCrossStrategy(Strategy):
             live_sig = live_sig.ffill()
 
         close_t = pd.Timestamp(p.close_time).time()
+        close_t = dt.time.fromisoformat(p.close_time)  # "16:00" -> time(16,0)
         is_last_bar_of_day = bars.index.time == close_t
 
         return pd.DataFrame(
