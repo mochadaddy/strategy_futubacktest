@@ -46,6 +46,9 @@ class MAHourCrossStrategy(Strategy):
         PlotSpec("ma_short", "price", "line", "MA short (daily)"),
         PlotSpec("ma_long", "price", "line", "MA long (daily)"),
         PlotSpec("daily_sig_live", "lower", "line", "Daily signal (live)"),  #1108新增
+        PlotSpec("prev_ma_s", "lower2", "line", "Prev MA short"),
+        PlotSpec("prev_ma_l", "lower2", "line", "Prev MA long"),
+        PlotSpec("ref_l", "lower2", "line", "REF MA long"),
     )
     params: MAHourCrossParams
 
@@ -70,6 +73,7 @@ class MAHourCrossStrategy(Strategy):
         daily_close = bars.groupby(day)["close"].last()
         d_ma_s = fn(daily_close, p.short_window)
         d_ma_l = fn(daily_close, p.long_window)
+
 
         # Broadcast completed-day values back to bar level as plain arrays
         # (.reindex(day) keeps the day index -> must use .to_numpy()).
@@ -111,6 +115,9 @@ class MAHourCrossStrategy(Strategy):
             {
                 "ma_short": ma_short,
                 "ma_long": ma_long,
+                "prev_ma_s": prev_ma_s,  # 新增
+                "prev_ma_l": prev_ma_l,  # 新增
+                "ref_l": ref_l,  # 新增
                 "daily_sig_live": live_sig,
                 "is_last_bar_of_day": is_last_bar_of_day,
             },
@@ -137,9 +144,16 @@ class MAHourCrossStrategy(Strategy):
         if triggered is None and live_sig != last_sig:
             self._day_signal[(sym, d)] = live_sig
             out = live_sig
-        elif triggered is not None and is_close and live_sig != triggered:
-            self._day_signal[(sym, d)] = live_sig
-            out = live_sig
+        elif triggered is not None and is_close:
+            # 收盘确认：不看 live_sig（被昨日闸门锁死），直接看 ma_short vs ma_long
+            ms = ctx.indicator("ma_short")
+            ml = ctx.indicator("ma_long")
+            if triggered == 0.0 and ms > ml:  # 今日卖出后，收盘仍多头排列 → 买回
+                self._day_signal[(sym, d)] = 1.0
+                out = 1.0
+            elif triggered == 1.0 and ms < ml:  # 今日买入后，收盘变空头排列 → 卖出
+                self._day_signal[(sym, d)] = 0.0
+                out = 0.0
 
         if is_close:
             self._last_sig[sym] = live_sig

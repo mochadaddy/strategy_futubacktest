@@ -547,7 +547,7 @@ footer a { color: var(--ink-2); }
     var palette = [css("--s1"), css("--s2"), css("--s3"), css("--s4")];
     var priceIdx = 0, lowerIdx = 0, series = [];
     sym.plots.forEach(function (p) {
-      var pane = p.pane === "price" ? 0 : 1;
+      var pane = p.pane === "price" ? 0 : (p.pane === "lower2" ? 2 : 1);
       var color = palette[(pane === 0 ? priceIdx++ : lowerIdx++) % palette.length];
       var s;
       if (p.kind === "histogram") {
@@ -562,6 +562,7 @@ footer a { color: var(--ink-2); }
     });
     var panes = pxChart.panes();
     if (panes.length > 1) { panes[0].setStretchFactor(2.4); panes[1].setStretchFactor(1); }
+    if (panes.length > 2) { panes[2].setStretchFactor(1); }
     var markers = sym.fills.slice().sort(function (a, b) { return a.time - b.time; }).map(function (f) {
       var buy = f.side === "BUY";
       return {
