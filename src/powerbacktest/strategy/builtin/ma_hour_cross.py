@@ -49,6 +49,7 @@ class MAHourCrossStrategy(Strategy):
         PlotSpec("prev_ma_s", "lower2", "line", "Prev MA short"),
         PlotSpec("prev_ma_l", "lower2", "line", "Prev MA long"),
         PlotSpec("ref_l", "lower2", "line", "REF MA long"),
+        PlotSpec("daily_sig_exec", "lower", "line", "Daily signal (exec)"),
     )
     params: MAHourCrossParams
 
@@ -56,6 +57,8 @@ class MAHourCrossStrategy(Strategy):
         super().__init__(*a, **kw)
         self._day_signal: dict = {}  # date -> signal triggered today
         self._last_sig: dict[str, float] = {}
+        self._exec_sig: dict[str, float] = {}  # sym -> 当前生效信号（展示用）
+        self.last_exec_sig: float = float("nan")  # 供引擎读取
         #self._last_sig: float = float("nan")  # last committed daily signal
 
     def warmup_bars(self) -> int:
@@ -120,6 +123,7 @@ class MAHourCrossStrategy(Strategy):
                 "ref_l": ref_l,  # 新增
                 "daily_sig_live": live_sig,
                 "is_last_bar_of_day": is_last_bar_of_day,
+                "daily_sig_exec": pd.Series(float("nan"), index=bars.index),
             },
             index=bars.index,
         )
@@ -157,4 +161,7 @@ class MAHourCrossStrategy(Strategy):
 
         if is_close:
             self._last_sig[sym] = live_sig
+        if out == 1.0 or out == 0.0:          # 盘中触发或收盘反转都更新
+            self._exec_sig[sym] = out
+        self.last_exec_sig = self._exec_sig.get(sym, float("nan"))
         return out

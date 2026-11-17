@@ -340,6 +340,16 @@ def run_on_bars(
         )
         for f in feeds
     }
+    # ↓↓↓ 调试验证：打印指定区间的 daily_sig_exec ↓↓↓
+    import datetime as _dt
+    v_start, v_end = _dt.date(2025, 4, 28), _dt.date(2025, 5, 2)
+    for sym, view in views.items():
+        if "daily_sig_exec" not in view.indicators.columns:
+            continue
+        s = view.indicators["daily_sig_exec"]
+        seg = s[(s.index.date >= v_start) & (s.index.date <= v_end)]
+        log.info("%s daily_sig_exec %s..%s:\n%s", sym, v_start, v_end, seg)
+    # ↑↑↑ 验证完可删 ↑↑↑
     return BacktestResult(
         config=config,
         strategy=strategy.describe(),

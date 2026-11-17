@@ -427,6 +427,10 @@ class Simulator:
             )
             out = self.strategy.on_bar(ctx)
             sig = math.nan if out is None else float(out)
+            # 生效信号写回指标本体，供报告画图（ctx.indicators 是切片，策略侧写不进）
+            exec_sig = getattr(self.strategy, "last_exec_sig", math.nan)
+            if "daily_sig_exec" in feed.indicators.columns and exec_sig == exec_sig:
+                feed.indicators.loc[feed.bars.index[i], "daily_sig_exec"] = exec_sig
         if self.blocked[sym] and sig != 1.0:
             self.blocked[sym] = False
         if sym in self.pending:
